@@ -1,0 +1,120 @@
+---
+title: "Diffusive equilibration in thin-films (DET) - helper functions"
+author: "Marko Lipka"
+date: "February 26, 2018"
+output: github_document
+bibliography: library.bib
+---
+
+Collection of simple functions for calculations in the context of DET applications:
+
+  * *DET.slice.volume.ccm(slice.width.mm, gel.thickness.mm = 1, DET.window.width.mm = 20)* calculates the volume of a rectangular DET gel slice from 
+    + DET window width (default = 20\ mm),
+    + gel thickness (default = 1\ mm) and
+    + slice width
+
+  * *DET.slice.amount.uM(V.slice.ccm, c.ambient.uM, ...)* returns the amount of substance of a solute in a slice of given volume (*V.slice.ccm*) or geometry (arguments passed to *DET.slice.volume.ccm()*, see above) after equilibration with ambient solute concentration
+
+  * *DET.extract.conc.uM(n.slice.umol, V.extraction.uL, ...)* returns the concentration of a gel extract made with a given eluent volume and the amount of substance of a solute in the extracted slice.
+  Instead of *n.slice.umol*, arguments of the above described functions can be provided instead (handed to the *DET.slice.amount.uM()* function).
+
+# Background
+
+Biogeochemical processes in organic-rich sediments or fluxes through the benthic boundary layer are reflected by concentration gradients of nutrients, redox-metabolites and metals.
+It is desirable to sample these transition zones at highest possible resolutions.
+The diffusive equilibration in thin-films (DET) technique is based on the application of thin polyacrylamide gel films, which are convenient to prepare, stable, easy and clean to use, and require a relatively short time for solution equilibration (within hours) [@Krom1994; @Harper1997].
+The DET gels are usually sliced to the required spatial resolution after recovery.
+For concentration analysis, the gel slices are back equilibrated by extracting them with a small volume of deionized water or another eluent.
+To minimize back-equilibration times for DET analysis, diffusional path lengths and eluent volumes should be as small as possible [@Harper1997].
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
+```
+
+```{r test}
+library(testthat)
+test_file("tests/test_DET-helper.R",
+          reporter = "fail") # Stops on failed unit-test, otherwise silent
+```
+
+# Examples
+
+```{r exampleSetup, include = F}
+library(reshape2)
+library(RSQLite)
+
+DBfile <- "~/Dropbox/IOW/SECOS/data/DB/SECOS-DB.sqlite"
+drv <- dbDriver("SQLite")
+con <- dbConnect(drv, DBfile)
+
+source("~/Dropbox/IOW/R-functions/DET_helpers/DET_helpers.R")
+```
+
+## DET application in marine sediments
+### Known pore water concentration profiles from sampling with Rhizons
+
+```{r loadandplot, echo=FALSE, fig.width=10}
+pw.POS475.DET <- dbGetQuery(con, "SELECT * FROM Porewater_analysis_results_SECOS
+                       NATURAL LEFT JOIN cruises
+                       WHERE Cruises_ID = 'POS475'
+                       AND Stations_ID IN (53, 57);")
+
+mains <-  c("Ca_mM",  "Mg_mM",  "Na_mM",  "K_mM",  "SO4_mM")
+minors <- c("Ba_µM",  "Li_µM",  "Fe_µM",  "Mn_µM",  "P_µM",  "Si_µM",  "Sr_µM",  "Mo_µM")
+
+library(tidyverse)
+ggplot(melt(pw.POS475.DET, measure.vars = c(mains, minors)), aes(x = Depth_cm, y = value)) +
+  geom_point() +
+  coord_flip() +
+  scale_x_reverse() +
+  expand_limits(y = 0) +
+  facet_grid(Site ~ variable, scales = "free", switch = "x") +
+  theme_bw() +
+  theme(strip.placement = "outside", axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### Potential range of concentration values in DET slices applied in the same sediments
+
+```{r}
+slice.width.cm <- 0.1
+extraction.volume.uL <- 100
+
+slice.volume.ccm <- DET.slice.volume.ccm(slice.width.mm = slice.width.cm * 10)
+```
+
+With a DET gel slice width of `r slice.width.cm`\ cm
+and an extraction volume of `r extraction.volume.uL`\ µL, the following concentration ranges can be expected in the DET slice extracts.
+
+```{r, echo = F}
+pw.POS475.DET.slice.n.uM <- 
+  data.frame(pw.POS475.DET[1:5],
+             lapply(pw.POS475.DET[, mains],
+                    function(x) {
+                      DET.extract.conc.uM(
+                        V.slice.ccm = slice.volume.ccm, 
+                        c.ambient.uM = x * 1000,
+                        V.extraction.uL = extraction.volume.uL
+                      )} / 1000),
+             lapply(pw.POS475.DET[, minors],
+                    function(x) {
+                      DET.extract.conc.uM(
+                        V.slice.ccm = slice.volume.ccm,
+                        c.ambient.uM = x,
+                        V.extraction.uL = extraction.volume.uL)}))
+
+pw.POS475.DET.slice.n.uM %>%
+  select(mains, minors) %>%
+  apply(MARGIN = 2, FUN = range) %>%
+  t() %>%
+  pander::pander(digits = 0)
+```
+
+Based on these values, the further analysis of the extracts can be planned precisely, so that only a minimum of extract volume must be used. 
+
+# ToDo
+
+  * calculate application times depending on gel thickness
+  * get slope from highres conc profile
+  * plot 2D solute distribution when gel cut into a matrix instead of slices
+
+# References
